@@ -5,6 +5,7 @@
 #include <string.h> 
 #include <signal.h> // for signal
 #include <sys/wait.h> // for waitpid
+#include <ctype.h> // for isdigit
 
 #define MAX_LINE 80 /* 80 chars per line, per command, should be enough. */
 
@@ -99,19 +100,26 @@ int makeFork(char *args[], int background){
     else{ // wait for the child process to finish
         if (background == 1) { // process should run in background
             printf("[Child PID = %d, background = TRUE]\n", pid);
-            // kill(pid, SIGCONT); // stop the process with the given pid
             return pid;
         }
         else{ // process should run in foreground
             printf("[Child PID = %d], background = FALSE]\n", pid); // Print the child process ID
             foreground_pid = pid; // store the PID of the foreground process
             waitpid(pid, NULL, 0); // wait for the child process to finish
-            // kill(pid, SIGCONT); // resume the process with the given pid
             printf("Child process complete.\n");
             foreground_pid = -1; // reset the PID of the foreground process
         }
     }
     return pid;
+}
+
+int isNumeric(const char *str) {
+    if (str == NULL || *str == '\0') return 0;
+    while (*str) {
+        if (!isdigit((unsigned char) *str)) return 0;
+        str++;
+    }
+    return 1;
 }
 
 int main(void) {
@@ -130,8 +138,15 @@ int main(void) {
         printf("RKshell[%d] $ ", i);
         fflush(stdout);
         setup(inputBuffer,args,&background);       /* get next command */
-        // handle built-in commands
-        if(args[0] == NULL){ // if no command is entered
+
+        // Input validation
+        // if command entered is invalid or empty
+        if ((strcmp(args[0], "bg") == 0
+            || strcmp(args[0], "fg") == 0
+            || strcmp(args[0], "kill") == 0 
+            || strcmp(args[0], "stop") == 0)
+            && (args[1] == NULL || !isNumeric(args[1]))) {
+            fprintf(stderr, "Not a command or invalid PID.\n");
             continue;
         }
         else if(strcmp(args[0], "exit") == 0){
@@ -148,7 +163,19 @@ int main(void) {
             printf("Child Complete: pid = %d\n", atoi(args[1]));
         }
         else if(strcmp(args[0], "jobs") == 0){ // if the command is "jobs"
-            system("ps -o pid,tty,stat,time,comm"); // print the list of all processes
+            pid_t jobs_pid = fork();
+            if (jobs_pid == 0){ // make a child process to handle jobs
+                char *argv[] = {"ps", "-o", "pid,tty,stat,time,comm", NULL}; 
+                execvp("ps", argv); // print the list of all processes
+                perror("execvp failed"); // if execvp fails
+                exit(1);
+            }
+            else if (jobs_pid > 0){ // parent process
+                waitpid(jobs_pid, NULL, 0); // wait for the child process to finish
+            }
+            else {
+                perror("fork failed"); // if fork fails
+            }
         }
         else if (strcmp(args[0], "kill") == 0){ // if the command is "kill"
             kill(atoi(args[1]), SIGKILL); // kill the process with the given pid
